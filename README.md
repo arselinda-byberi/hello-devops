@@ -48,7 +48,7 @@ so a running pod can be traced back to its build and commit.
 
 ## Screenshots
 
-Pipeline on `main`, including the approval and prod deploy:
+Pipeline stages on `main`:
 
 ![Jenkins stage view](docs/screenshots/jenkins-stage-view.png)
 
@@ -66,18 +66,10 @@ Dev deployment after a push to `develop`:
 
 ### Codespaces
 
-1. Create a Codespace on `develop` (Code → Codespaces). The devcontainer installs Docker,
-   kubectl, Helm and k3d.
-2. Start the lab:
-```bash
-   bash lab/up.sh
-```
-   It prints the Jenkins URL and admin password at the end. The password is generated on first
-   run and kept in `lab/.jenkins-admin-password` (git-ignored).
-3. In Jenkins, create a Multibranch Pipeline with a Git branch source pointing at this repo,
-   and set the scan trigger to 1 minute.
-4. Push to `develop` and check `curl localhost:30080/`. Merge to `main`, approve the deploy,
-   and check `curl localhost:30081/`.
+1. Create a Codespace on `develop` (Code → Codespaces). The devcontainer installs Docker, kubectl, Helm and k3d.
+2. Run `bash lab/up.sh`. It starts the registry, the cluster and Jenkins, and prints the Jenkins URL and admin password (stored in `lab/.jenkins-admin-password`, git-ignored).
+3. In Jenkins, create a Multibranch Pipeline with a Git branch source pointing at this repo, and set the scan trigger to 1 minute.
+4. Push to `develop` and check `curl localhost:30080/`. Merge to `main`, approve the deploy, and check `curl localhost:30081/`.
 
 `lab/down.sh` removes everything. Stopping the Codespace keeps the lab as it is; run
 `bash lab/up.sh` again after restarting it.
