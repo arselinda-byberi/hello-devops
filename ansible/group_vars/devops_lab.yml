@@ -1,4 +1,4 @@
-timezone: Europe/Tirane
+timezone: UTC
 
 base_packages:
   - git

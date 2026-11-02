@@ -6,7 +6,7 @@ Vagrant.configure("2") do |config|
   config.vm.network "private_network", ip: "192.168.56.10"
 
   # Sizing: k3s ~1 GB, Jenkins ~1-1.5 GB, Docker builds + registry ~1 GB, OS ~0.5 GB
-  # -> 6 GB RAM gives headroom; 4 GB works if your laptop is tight.
+  # -> 6 GB RAM leaves some headroom.
   config.vm.provider "virtualbox" do |vb|
     vb.name   = "devops-lab"
     vb.memory = 6144

@@ -19,7 +19,7 @@
     state: started
     enabled: true
 
-- name: Keep SELinux enforcing (do not disable it to make things "work")
+- name: Ensure SELinux is enforcing
   ansible.posix.selinux:
     policy: targeted
     state: enforcing

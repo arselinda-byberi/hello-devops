@@ -2,8 +2,7 @@
   "name": "hello-devops CI/CD lab",
   "build": { "dockerfile": "Dockerfile" },
 
-  // 2 cores / 8 GB RAM: enough for Jenkins + k3s + registry, and the cheapest
-  // machine type, so the free monthly Codespaces allowance lasts longest.
+  // Smallest machine type that fits Jenkins + k3s + registry.
   "hostRequirements": {
     "cpus": 2,
     "memory": "8gb"

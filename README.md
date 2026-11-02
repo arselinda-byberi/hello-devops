@@ -1,182 +1,148 @@
-# hello-devops — End-to-end CI/CD lab
+# hello-devops
 
-A small Python service taken all the way from `git push` to a running, health-checked
-Kubernetes deployment, with every layer automated and defined as code:
+A small Flask service with a complete CI/CD setup around it: Jenkins builds, tests and
+packages it, and Helm deploys it to Kubernetes. Pushes to `develop` go to a dev namespace
+automatically; merges to `main` go to prod after a manual approval.
 
-| Layer | Tool | What it does here |
-|---|---|---|
-| Packaging | **Docker** | Multi-stage, non-root image with a healthcheck |
-| CI/CD | **Jenkins** (Groovy pipeline) | Lint → test → lint infra code → build → smoke test → push → deploy, following **Git Flow** |
-| Jenkins config | **JCasC** (Configuration as Code) | Jenkins itself is configured from `lab/jenkins/casc.yaml`, with no clicking through a wizard |
-| Registry | **Docker Registry** | Private image registry; the pipeline never depends on Docker Hub |
-| Orchestration | **Kubernetes** (k3s) | Runs the app with probes, resource limits and zero-downtime rolling updates |
-| Release | **Helm** | One chart, separate values for `dev` and `prod`, automatic rollback on failure |
-| Server provisioning | **Ansible** | Roles that turn a fresh **RHEL / Rocky Linux 9** host into the same stack (hardened OS, firewalld, SELinux enforcing). Linted in CI on every build. |
-| Dev environment | **GitHub Codespaces** | The whole lab runs in the cloud on a free Codespace, defined in `.devcontainer/` |
+Stack: Jenkins (declarative pipeline, JCasC), Docker, a private registry, Kubernetes (k3s),
+Helm, Ansible, GitHub Codespaces.
 
-## Architecture
+## How it fits together
 
 ```mermaid
 flowchart LR
     dev[Developer] -->|git push| gh[(GitHub)]
-    gh -->|branch scan| jenkins[Jenkins<br/>configured by JCasC]
-    subgraph LAB["Lab (GitHub Codespace, or a Rocky Linux 9 VM via Ansible)"]
-        jenkins -->|docker build + push| reg[(Private registry :5000)]
-        jenkins -->|helm upgrade --atomic| k8s[Kubernetes k3s]
+    gh -->|branch scan| jenkins[Jenkins]
+    subgraph LAB["Lab environment"]
+        jenkins -->|docker build + push| reg[(Registry :5000)]
+        jenkins -->|helm upgrade --atomic| k8s[k3s cluster]
         reg -->|image pull| k8s
-        k8s --> devns[namespace: dev<br/>1 replica · :30080]
-        k8s --> prodns[namespace: prod<br/>3 replicas + PDB · :30081]
+        k8s --> devns[dev: 1 replica, :30080]
+        k8s --> prodns[prod: 3 replicas + PDB, :30081]
     end
 ```
 
-## Proof it runs
+The lab runs in a GitHub Codespace: `lab/up.sh` starts the registry, a k3s cluster (via k3d)
+and Jenkins as containers. The `ansible/` directory has roles that set up the same stack on a
+Rocky Linux 9 / RHEL 9 server instead.
 
-**Jenkins pipeline**: every stage, from lint and tests to the approved production deploy:
+## Pipeline
+
+The `Jenkinsfile` runs as a multibranch pipeline:
+
+1. Lint (flake8) and unit tests (pytest)
+2. `ansible-lint` on the Ansible roles and `helm lint` on the chart, in parallel
+3. Build the image and smoke-test it (start the container, poll `/healthz`)
+4. Push to the private registry (`develop` and `main` only)
+5. Deploy with `helm upgrade --install --atomic`: `develop` to `dev`, `main` to `prod` after an
+   approval step
+
+| Branch | What happens |
+|---|---|
+| `feature/*` | Steps 1–3 only |
+| `develop` | Steps 1–5, deploys to `dev` |
+| `main` | Steps 1–5, waits for approval, deploys to `prod` |
+
+Images are tagged `<build-number>-<short-sha>`, and the app returns that tag from `/version`,
+so a running pod can be traced back to its build and commit.
+
+## Screenshots
+
+Pipeline on `main`, including the approval and prod deploy:
 
 ![Jenkins stage view](docs/screenshots/jenkins-stage-view.png)
 
-**Production**: 3 replicas behind a Kubernetes Service; repeated requests are answered by different pods:
+Prod: three pods, with requests spread across them:
 
-![Production pods and load balancing](docs/screenshots/prod-pods.png)
+![Prod pods](docs/screenshots/prod-pods.png)
 
-**Dev environment**: deployed automatically from `develop`; the version string is the Jenkins build number plus the commit hash:
+Dev deployment after a push to `develop`:
 
 ![Dev deployment](docs/screenshots/dev-deploy.png)
 
 ![Jenkins branches](docs/screenshots/jenkins-develop-green.png)
 
-## Branching model (Git Flow)
+## Running it
 
-| Branch | Pipeline result |
-|---|---|
-| `feature/*` | Lint, unit tests, Ansible + Helm lint, image build, container smoke test. Nothing is deployed. |
-| `develop` | All of the above, then the image is pushed and deployed to **dev** |
-| `main` | All of the above, then a **manual approval** gate and a deploy to **prod** |
+### Codespaces
 
-Every image is tagged `<build-number>-<commit-sha>`, so any running pod can be traced back
-to the exact commit and Jenkins build that produced it.
-
----
-
-## Run the lab in GitHub Codespaces (free, nothing to install)
-
-### 1. Start the Codespace
-On the repository page: **Code → Codespaces → Create codespace on develop**.
-The first start takes about 5 minutes. It installs Docker, kubectl, Helm and k3d
-(see `.devcontainer/devcontainer.json`).
-
-### 2. Start the lab (about 5–10 minutes the first time)
-In the Codespace terminal:
+1. Create a Codespace on `develop` (Code → Codespaces). The devcontainer installs Docker,
+   kubectl, Helm and k3d.
+2. Start the lab:
 ```bash
-bash lab/up.sh
+   bash lab/up.sh
 ```
-This creates the private registry and a k3s Kubernetes cluster (via k3d), builds a Jenkins
-image with the needed tools and plugins, and starts Jenkins already configured through JCasC.
-At the end it prints the Jenkins URL, user and password.
+   It prints the Jenkins URL and admin password at the end. The password is generated on first
+   run and kept in `lab/.jenkins-admin-password` (git-ignored).
+3. In Jenkins, create a Multibranch Pipeline with a Git branch source pointing at this repo,
+   and set the scan trigger to 1 minute.
+4. Push to `develop` and check `curl localhost:30080/`. Merge to `main`, approve the deploy,
+   and check `curl localhost:30081/`.
+
+`lab/down.sh` removes everything. Stopping the Codespace keeps the lab as it is; run
+`bash lab/up.sh` again after restarting it.
+
+### Rocky Linux 9 / RHEL 9 server
 
 ```bash
-kubectl get nodes            # the cluster
-docker ps                    # registry, cluster and Jenkins containers
+vagrant up                      # local VM, Ansible runs inside it
 ```
-
-### 3. Create the pipeline job in Jenkins
-1. Open the **Ports** tab in the Codespace, then the globe icon next to **Jenkins (8080)**.
-   Log in as `admin` with the printed password.
-2. **New Item** → name `hello-devops` → **Multibranch Pipeline** → OK.
-3. **Branch Sources → Add source → Git**. Repository URL: `https://github.com/<you>/hello-devops.git`
-4. **Scan Multibranch Pipeline Triggers**: tick *Periodically if not otherwise run*, interval **1 minute**.
-5. **Save**. Jenkins discovers `main` and `develop` and starts building.
-
-### 4. Watch the whole flow work
-```bash
-# develop -> dev
-git checkout develop
-# change the message in app/app.py
-git commit -am "Change greeting" && git push
-# within a minute or two Jenkins deploys it:
-curl http://localhost:30080/
-
-# release to prod (Git Flow: develop -> main)
-git checkout main && git merge develop && git push
-# approve "Deploy to production?" in Jenkins, then:
-curl http://localhost:30081/      # run it a few times: the hostname changes across 3 pods
-kubectl -n prod get pods
-```
-
-### 5. Stop it when you're done
-Codespaces stop by themselves after 30 minutes idle. To stop right away: on
-github.com/codespaces, open **…** next to the Codespace and choose **Stop codespace**.
-Next time, start it again and run `bash lab/up.sh`; everything continues where it was.
-
-### Things to try (good interview stories)
-- **Break a test** on a feature branch and see the pipeline stop before anything is built.
-- **Break the readiness check** (make `/readyz` return 500) on `develop`. `helm --atomic`
-  rolls the release back automatically, and the old version keeps serving.
-- **Zero-downtime rollout:** run `while true; do curl -s localhost:30081/version; echo; sleep 0.5; done`
-  during a prod deploy. With `maxUnavailable: 0` and readiness probes, no request fails.
-- **Manual rollback:** `helm -n prod history hello-devops`, then `helm -n prod rollback hello-devops <rev>`.
-
----
-
-## Alternative: a real Rocky Linux 9 server, provisioned by Ansible
-
-`ansible/` contains roles that build the same stack on a RHEL-family host:
-`common` (packages, chrony, firewalld, SELinux enforcing, SSH key-only), `docker`,
-`registry` (systemd unit), `k3s`, `helm` and `jenkins`. The `Vagrantfile` creates a local
-Rocky Linux 9 VM (6 GB RAM) and runs the playbook inside it:
-```bash
-vagrant up
-```
-Or against any existing Rocky/RHEL 9 VM, e.g. in the cloud:
+or, against an existing host:
 ```bash
 cd ansible
 ansible-galaxy collection install -r requirements.yml
 ansible-playbook -i inventory/hosts.ini site.yml
 ```
-The pipeline lints these roles with `ansible-lint` on every build. On a VM, set
-`PUSH_REGISTRY`/`PULL_REGISTRY` in the `Jenkinsfile` to `localhost:5000` and give the smoke test a
-user-defined Docker network.
+Roles: `common` (packages, chrony, firewalld, SELinux enforcing, key-only SSH), `docker`,
+`registry` (systemd unit), `k3s`, `helm`, `jenkins`. The `PUSH_REGISTRY`, `PULL_REGISTRY` and
+`LAB_NETWORK` values at the top of the `Jenkinsfile` are specific to the Codespaces lab and need
+adjusting for a VM. The roles are linted in CI but have not been run against a server in this
+repo yet.
 
----
+## Design notes
 
-## Design decisions
+**Sizing.** The lab fits in 2 vCPU / 8 GB. Jenkins takes roughly 1–1.5 GB, k3s under 1 GB,
+image builds and the registry about 1 GB. App pods request 50m CPU / 64Mi in dev and
+100m / 96Mi in prod.
 
-**Resource sizing.** The lab runs in 8 GB RAM / 2 vCPU: roughly 1–1.5 GB for Jenkins (JVM),
-under 1 GB for k3s, about 1 GB for image builds and the registry, with the rest as headroom. Each
-app pod requests 50m CPU / 64 Mi in dev and 100m / 96 Mi in prod, so 3 prod replicas reserve under
-0.3 CPU and 300 Mi, and the scheduler can always place them.
+**Availability.** Prod runs 3 replicas with a PodDisruptionBudget (`minAvailable: 2`), rolling
+updates with `maxUnavailable: 0`, and liveness/readiness probes. It is a single-node cluster,
+so node failure isn't covered; that would need more nodes and pod anti-affinity.
 
-**High availability.** In prod there are 3 replicas, a PodDisruptionBudget (`minAvailable: 2`),
-a rolling update with `maxUnavailable: 0`, and liveness/readiness probes. This is a single-node
-lab, so node-level HA is out of scope. In a real setup the next step is 3 control-plane nodes
-(k3s embedded etcd, or OpenShift) behind a load balancer, with pod anti-affinity across nodes.
+**Security.** The container runs as a non-root UID with a read-only root filesystem, all
+capabilities dropped and the `RuntimeDefault` seccomp profile, which also matches OpenShift's
+default restrictions. Jenkins has no anonymous access and its password isn't committed.
+Codespace ports are private. The Ansible roles keep SELinux enforcing, open only the needed
+firewalld ports and disable SSH password login.
 
-**Security.**
-- The container runs as a non-root UID, with a read-only root filesystem, all Linux capabilities
-  dropped and seccomp set to `RuntimeDefault`. These are the same constraints OpenShift enforces
-  by default.
-- Jenkins has no anonymous access. Its admin password is generated at start-up, passed in as an
-  environment variable and never committed. Codespace ports are private to the owner by default.
-- On the server path, SELinux stays enforcing, firewalld exposes only the needed ports and SSH
-  accepts keys only.
+**k3s instead of OpenShift.** OpenShift needs much more memory than this environment has. The
+chart and pod security settings are compatible with it.
 
-**Why k3s and not OpenShift?** OpenShift needs 16 GB+ RAM even for a local install. k3s is a
-certified Kubernetes distribution that fits in a small machine. The Helm chart and pod security
-settings carry over to OpenShift unchanged.
+## Rollback and failure tests
 
-## Repository layout
+- A failing unit test stops the pipeline before an image is built.
+- If `/readyz` fails after a deploy, `helm --atomic` rolls back to the previous release.
+- `helm -n prod history hello-devops` and `helm -n prod rollback hello-devops <rev>` for a
+  manual rollback.
+- `while true; do curl -s localhost:30081/version; echo; sleep 0.5; done` during a prod deploy
+  shows whether any requests fail during the rollout.
+
+## Layout
+
 ```
-app/                 Python (Flask) service + pytest tests
-Dockerfile           Multi-stage, non-root image
-Jenkinsfile          Declarative Groovy pipeline (Git Flow aware)
-helm/hello-devops/   Helm chart + values-dev.yaml / values-prod.yaml
-lab/                 Codespaces lab: up.sh, down.sh, Jenkins image + JCasC config
-.devcontainer/       Codespace definition (Docker, kubectl, Helm, k3d)
-ansible/             Playbook + roles for a Rocky Linux 9 / RHEL 9 server
-Vagrantfile          Local Rocky Linux 9 VM for the Ansible path
+app/                Flask app and tests
+Dockerfile          multi-stage, non-root image
+Jenkinsfile         pipeline
+helm/hello-devops/  chart, values-dev.yaml, values-prod.yaml
+lab/                Codespaces lab scripts, Jenkins image and JCasC config
+.devcontainer/      Codespace definition
+ansible/            playbook and roles for Rocky Linux / RHEL 9
+Vagrantfile         local Rocky Linux 9 VM
+docs/screenshots/   screenshots used above
 ```
 
-## Possible next steps
-- Terraform for the VM itself (e.g. the `libvirt`, `openstack` or `vsphere` provider)
-- Prometheus + Grafana via the `kube-prometheus-stack` Helm chart, with an alert on pod restarts
-- Image vulnerability scanning with Trivy as a pipeline stage
+## To do
+
+- Terraform for provisioning the VM
+- Prometheus and Grafana (kube-prometheus-stack)
+- Trivy image scan in the pipeline
