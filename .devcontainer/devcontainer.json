@@ -1,6 +1,6 @@
 {
   "name": "hello-devops CI/CD lab",
-  "image": "mcr.microsoft.com/devcontainers/python:1-3.12-bookworm",
+  "build": { "dockerfile": "Dockerfile" },
 
   // 2 cores / 8 GB RAM: enough for Jenkins + k3s + registry, and the cheapest
   // machine type, so the free monthly Codespaces allowance lasts longest.
