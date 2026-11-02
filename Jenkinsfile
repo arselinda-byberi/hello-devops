@@ -3,8 +3,8 @@
 //   develop    -> ... + push image + deploy to the "dev" namespace
 //   main       -> ... + push image + manual approval + deploy to "prod"
 //
-// Requires a Multibranch Pipeline job and these Jenkins plugins:
-//   Pipeline, Git, Docker Pipeline, JUnit, Timestamper
+// Runs as a Multibranch Pipeline on the lab Jenkins (see lab/). The three
+// values below describe that lab; change them to run on another setup.
 
 pipeline {
     agent any
@@ -17,10 +17,14 @@ pipeline {
     }
 
     environment {
-        REGISTRY   = 'localhost:5000'
-        APP_NAME   = 'hello-devops'
-        IMAGE      = "${REGISTRY}/${APP_NAME}"
-        CHART_PATH = 'helm/hello-devops'
+        APP_NAME      = 'hello-devops'
+        CHART_PATH    = 'helm/hello-devops'
+        // Jenkins pushes through the Docker host's port mapping...
+        PUSH_REGISTRY = 'localhost:5000'
+        // ...and Kubernetes pulls from the same registry by its container name.
+        PULL_REGISTRY = 'k3d-lab-registry.localhost:5000'
+        // Docker network shared by Jenkins, the registry and the cluster
+        LAB_NETWORK   = 'k3d-lab'
     }
 
     stages {
@@ -32,20 +36,14 @@ pipeline {
                     env.IMAGE_TAG = "${env.BUILD_NUMBER}-${shortSha}"
                     currentBuild.displayName = "#${env.BUILD_NUMBER} ${env.BRANCH_NAME} ${shortSha}"
                 }
-                echo "Building ${env.IMAGE}:${env.IMAGE_TAG} from branch ${env.BRANCH_NAME}"
+                echo "Building ${env.APP_NAME}:${env.IMAGE_TAG} from branch ${env.BRANCH_NAME}"
             }
         }
 
         stage('Lint & Unit tests') {
-            agent {
-                docker {
-                    image 'python:3.12-slim'
-                    reuseNode true
-                }
-            }
             steps {
                 sh '''
-                    python -m venv .venv
+                    python3 -m venv .venv
                     . .venv/bin/activate
                     pip install --quiet --no-cache-dir -r app/requirements-dev.txt
                     flake8 app --max-line-length=100
@@ -59,19 +57,33 @@ pipeline {
             }
         }
 
-        stage('Lint Helm chart') {
-            steps {
-                sh """
-                    helm lint ${env.CHART_PATH} -f ${env.CHART_PATH}/values-dev.yaml
-                    helm lint ${env.CHART_PATH} -f ${env.CHART_PATH}/values-prod.yaml
-                    helm template test ${env.CHART_PATH} -f ${env.CHART_PATH}/values-prod.yaml > /dev/null
-                """
+        stage('Lint infrastructure code') {
+            parallel {
+                stage('Ansible') {
+                    steps {
+                        sh '''
+                            . .venv/bin/activate
+                            pip install --quiet --no-cache-dir ansible-lint
+                            ansible-galaxy collection install -r ansible/requirements.yml
+                            cd ansible && ansible-lint site.yml
+                        '''
+                    }
+                }
+                stage('Helm chart') {
+                    steps {
+                        sh """
+                            helm lint ${env.CHART_PATH} -f ${env.CHART_PATH}/values-dev.yaml
+                            helm lint ${env.CHART_PATH} -f ${env.CHART_PATH}/values-prod.yaml
+                            helm template test ${env.CHART_PATH} -f ${env.CHART_PATH}/values-prod.yaml > /dev/null
+                        """
+                    }
+                }
             }
         }
 
         stage('Build image') {
             steps {
-                sh "docker build --build-arg APP_VERSION=${env.IMAGE_TAG} -t ${env.IMAGE}:${env.IMAGE_TAG} ."
+                sh "docker build --build-arg APP_VERSION=${env.IMAGE_TAG} -t ${env.PUSH_REGISTRY}/${env.APP_NAME}:${env.IMAGE_TAG} ."
             }
         }
 
@@ -79,9 +91,10 @@ pipeline {
             steps {
                 sh """
                     docker rm -f smoke-${env.BUILD_NUMBER} 2>/dev/null || true
-                    docker run -d --name smoke-${env.BUILD_NUMBER} -p 18080:8080 ${env.IMAGE}:${env.IMAGE_TAG}
+                    docker run -d --name smoke-${env.BUILD_NUMBER} --network ${env.LAB_NETWORK} \
+                        ${env.PUSH_REGISTRY}/${env.APP_NAME}:${env.IMAGE_TAG}
                     for i in \$(seq 1 15); do
-                        if curl -fs http://localhost:18080/healthz; then echo ' -> healthy'; exit 0; fi
+                        if curl -fs http://smoke-${env.BUILD_NUMBER}:8080/healthz; then echo ' -> healthy'; exit 0; fi
                         sleep 2
                     done
                     echo 'Container did not become healthy'
@@ -99,7 +112,7 @@ pipeline {
         stage('Push image') {
             when { anyOf { branch 'develop'; branch 'main' } }
             steps {
-                sh "docker push ${env.IMAGE}:${env.IMAGE_TAG}"
+                sh "docker push ${env.PUSH_REGISTRY}/${env.APP_NAME}:${env.IMAGE_TAG}"
             }
         }
 
@@ -147,7 +160,7 @@ def deployWithHelm(String envName) {
         helm upgrade --install ${env.APP_NAME} ${env.CHART_PATH} \
             --namespace ${envName} --create-namespace \
             -f ${env.CHART_PATH}/values-${envName}.yaml \
-            --set image.repository=${env.IMAGE} \
+            --set image.repository=${env.PULL_REGISTRY}/${env.APP_NAME} \
             --set image.tag=${env.IMAGE_TAG} \
             --atomic --wait --timeout 3m
         kubectl -n ${envName} rollout status deployment/${env.APP_NAME}

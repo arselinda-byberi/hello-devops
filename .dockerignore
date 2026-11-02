@@ -1,6 +1,9 @@
 .git
+.venv
 **/__pycache__
 **/.pytest_cache
 ansible/
 helm/
+lab/
+.devcontainer/
 *.md

@@ -4,3 +4,6 @@ __pycache__/
 .venv/
 *.retry
 .vagrant/
+test-results.xml
+lab/.kubeconfig-jenkins
+lab/.jenkins-admin-password

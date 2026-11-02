@@ -1,0 +1,18 @@
+# Jenkins Configuration as Code: the controller is configured from this file,
+# not by clicking through the UI. Secrets come from environment variables.
+jenkins:
+  systemMessage: "hello-devops CI/CD lab (configured by JCasC)"
+  numExecutors: 2
+  securityRealm:
+    local:
+      allowsSignup: false
+      users:
+        - id: admin
+          password: ${JENKINS_ADMIN_PASSWORD}
+  authorizationStrategy:
+    loggedInUsersCanDoAnything:
+      allowAnonymousRead: false
+
+unclassified:
+  location:
+    url: ${JENKINS_URL:-http://localhost:8080/}

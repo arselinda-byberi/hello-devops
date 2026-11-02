@@ -1,0 +1,27 @@
+{
+  "name": "hello-devops CI/CD lab",
+  "image": "mcr.microsoft.com/devcontainers/python:1-3.12-bookworm",
+
+  // 2 cores / 8 GB RAM: enough for Jenkins + k3s + registry, and the cheapest
+  // machine type, so the free monthly Codespaces allowance lasts longest.
+  "hostRequirements": {
+    "cpus": 2,
+    "memory": "8gb"
+  },
+
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {},
+    "ghcr.io/devcontainers/features/kubectl-helm-minikube:1": {
+      "minikube": "none"
+    }
+  },
+
+  "postCreateCommand": "bash lab/install-tools.sh",
+
+  "forwardPorts": [8080, 30080, 30081],
+  "portsAttributes": {
+    "8080": { "label": "Jenkins" },
+    "30080": { "label": "App (dev)" },
+    "30081": { "label": "App (prod)" }
+  }
+}
