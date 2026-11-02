@@ -34,6 +34,8 @@ pipeline {
                     // Unique, traceable tag: build number + short commit hash
                     def shortSha = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
                     env.IMAGE_TAG = "${env.BUILD_NUMBER}-${shortSha}"
+                    // Unique per branch AND build, so parallel builds never share a container name
+                    env.SMOKE_NAME = "smoke-${env.BRANCH_NAME}-${env.BUILD_NUMBER}".replaceAll(/[^a-zA-Z0-9_.-]/, "-")
                     currentBuild.displayName = "#${env.BUILD_NUMBER} ${env.BRANCH_NAME} ${shortSha}"
                 }
                 echo "Building ${env.APP_NAME}:${env.IMAGE_TAG} from branch ${env.BRANCH_NAME}"
@@ -90,21 +92,21 @@ pipeline {
         stage('Smoke test image') {
             steps {
                 sh """
-                    docker rm -f smoke-${env.BUILD_NUMBER} 2>/dev/null || true
-                    docker run -d --name smoke-${env.BUILD_NUMBER} --network ${env.LAB_NETWORK} \
+                    docker rm -f ${env.SMOKE_NAME} 2>/dev/null || true
+                    docker run -d --name ${env.SMOKE_NAME} --network ${env.LAB_NETWORK} \
                         ${env.PUSH_REGISTRY}/${env.APP_NAME}:${env.IMAGE_TAG}
                     for i in \$(seq 1 15); do
-                        if curl -fs http://smoke-${env.BUILD_NUMBER}:8080/healthz; then echo ' -> healthy'; exit 0; fi
+                        if curl -fs http://${env.SMOKE_NAME}:8080/healthz; then echo ' -> healthy'; exit 0; fi
                         sleep 2
                     done
                     echo 'Container did not become healthy'
-                    docker logs smoke-${env.BUILD_NUMBER}
+                    docker logs ${env.SMOKE_NAME}
                     exit 1
                 """
             }
             post {
                 always {
-                    sh "docker rm -f smoke-${env.BUILD_NUMBER} || true"
+                    sh "docker rm -f ${env.SMOKE_NAME} || true"
                 }
             }
         }
