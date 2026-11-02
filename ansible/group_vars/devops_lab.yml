@@ -1,0 +1,26 @@
+timezone: Europe/Tirane
+
+base_packages:
+  - git
+  - curl
+  - tar
+  - vim
+  - jq
+  - chrony
+  - firewalld
+  - python3
+
+# Ports opened in firewalld
+firewall_ports:
+  - 8080/tcp    # Jenkins UI
+  - 6443/tcp    # Kubernetes API
+  - 30080/tcp   # app NodePort (dev)
+  - 30081/tcp   # app NodePort (prod)
+
+registry_port: 5000
+
+k3s_version: v1.30.6+k3s1
+helm_version: v3.16.2
+
+docker_users:
+  - jenkins

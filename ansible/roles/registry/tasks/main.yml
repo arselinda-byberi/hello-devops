@@ -1,0 +1,21 @@
+---
+# A private image registry so the pipeline never depends on Docker Hub.
+- name: Create registry storage directory
+  ansible.builtin.file:
+    path: /var/lib/registry
+    state: directory
+    mode: "0755"
+
+- name: Install registry systemd unit
+  ansible.builtin.template:
+    src: registry.service.j2
+    dest: /etc/systemd/system/registry.service
+    mode: "0644"
+  notify: Restart registry
+
+- name: Start and enable registry
+  ansible.builtin.systemd:
+    name: registry
+    state: started
+    enabled: true
+    daemon_reload: true

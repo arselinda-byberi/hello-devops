@@ -1,0 +1,58 @@
+---
+- name: Add Jenkins LTS repository
+  ansible.builtin.get_url:
+    url: https://pkg.jenkins.io/redhat-stable/jenkins.repo
+    dest: /etc/yum.repos.d/jenkins.repo
+    mode: "0644"
+
+- name: Import Jenkins signing key
+  ansible.builtin.rpm_key:
+    key: https://pkg.jenkins.io/redhat-stable/jenkins.io-2023.key
+    state: present
+
+- name: Install Java and Jenkins
+  ansible.builtin.dnf:
+    name:
+      - java-21-openjdk
+      - jenkins
+    state: present
+
+- name: Allow Jenkins to run Docker
+  ansible.builtin.user:
+    name: "{{ item }}"
+    groups: docker
+    append: true
+  loop: "{{ docker_users }}"
+  notify: Restart jenkins
+
+- name: Create .kube directory for Jenkins
+  ansible.builtin.file:
+    path: /var/lib/jenkins/.kube
+    state: directory
+    owner: jenkins
+    group: jenkins
+    mode: "0700"
+
+- name: Give Jenkins access to the cluster (kubeconfig)
+  ansible.builtin.copy:
+    src: /etc/rancher/k3s/k3s.yaml
+    dest: /var/lib/jenkins/.kube/config
+    remote_src: true
+    owner: jenkins
+    group: jenkins
+    mode: "0600"
+
+- name: Start and enable Jenkins
+  ansible.builtin.systemd:
+    name: jenkins
+    state: started
+    enabled: true
+
+- name: Wait for Jenkins to answer on port 8080
+  ansible.builtin.uri:
+    url: http://localhost:8080/login
+    status_code: [200, 403]
+  register: jenkins_up
+  retries: 30
+  delay: 5
+  until: jenkins_up.status in [200, 403]

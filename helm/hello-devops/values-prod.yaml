@@ -1,0 +1,19 @@
+# Production: more replicas + a disruption budget so a node drain or
+# rolling update never takes the service fully down.
+replicaCount: 3
+environment: prod
+
+service:
+  nodePort: 30081
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 96Mi
+  limits:
+    cpu: 500m
+    memory: 192Mi
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2

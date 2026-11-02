@@ -1,0 +1,35 @@
+---
+- name: Create k3s config directory
+  ansible.builtin.file:
+    path: /etc/rancher/k3s
+    state: directory
+    mode: "0755"
+
+- name: Let k3s pull from the local registry over plain HTTP
+  ansible.builtin.template:
+    src: registries.yaml.j2
+    dest: /etc/rancher/k3s/registries.yaml
+    mode: "0644"
+  notify: Restart k3s
+
+- name: Download k3s install script
+  ansible.builtin.get_url:
+    url: https://get.k3s.io
+    dest: /usr/local/bin/k3s-install.sh
+    mode: "0755"
+
+- name: Install k3s (single-node server)
+  ansible.builtin.command:
+    cmd: /usr/local/bin/k3s-install.sh
+    creates: /usr/local/bin/k3s
+  environment:
+    INSTALL_K3S_VERSION: "{{ k3s_version }}"
+    INSTALL_K3S_EXEC: "server --write-kubeconfig-mode 0640 --disable traefik"
+
+- name: Wait for the node to become Ready
+  ansible.builtin.command: /usr/local/bin/k3s kubectl wait --for=condition=Ready node --all --timeout=180s
+  register: k3s_node_ready
+  changed_when: false
+  retries: 5
+  delay: 10
+  until: k3s_node_ready.rc == 0

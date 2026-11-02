@@ -1,0 +1,28 @@
+---
+# Provisions a single Rocky Linux 9 / RHEL 9 host into a complete CI/CD lab:
+# hardened base OS -> Docker + private registry -> k3s (Kubernetes) + Helm -> Jenkins
+- name: Provision DevOps lab server
+  hosts: devops_lab
+  become: true
+
+  roles:
+    - common
+    - docker
+    - registry
+    - k3s
+    - helm
+    - jenkins
+
+  post_tasks:
+    - name: Read Jenkins initial admin password
+      ansible.builtin.slurp:
+        src: /var/lib/jenkins/secrets/initialAdminPassword
+      register: jenkins_pw
+      failed_when: false
+
+    - name: Show next steps
+      ansible.builtin.debug:
+        msg:
+          - "Jenkins:  http://{{ ansible_host | default(ansible_default_ipv4.address) }}:8080"
+          - "Initial admin password: {{ (jenkins_pw.content | default('') | b64decode | trim) or 'already set' }}"
+          - "Check the cluster:  sudo kubectl get nodes"

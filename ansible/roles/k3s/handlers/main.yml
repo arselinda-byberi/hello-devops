@@ -1,0 +1,6 @@
+---
+- name: Restart k3s
+  ansible.builtin.systemd:
+    name: k3s
+    state: restarted
+  failed_when: false   # k3s may not be installed yet on the first run
