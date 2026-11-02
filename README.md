@@ -29,6 +29,22 @@ flowchart LR
     end
 ```
 
+## Proof it runs
+
+**Jenkins pipeline**: every stage, from lint and tests to the approved production deploy:
+
+![Jenkins stage view](docs/screenshots/jenkins-stage-view.png)
+
+**Production**: 3 replicas behind a Kubernetes Service; repeated requests are answered by different pods:
+
+![Production pods and load balancing](docs/screenshots/prod-pods.png)
+
+**Dev environment**: deployed automatically from `develop`; the version string is the Jenkins build number plus the commit hash:
+
+![Dev deployment](docs/screenshots/dev-deploy.png)
+
+![Jenkins branches](docs/screenshots/jenkins-develop-green.png)
+
 ## Branching model (Git Flow)
 
 | Branch | Pipeline result |
